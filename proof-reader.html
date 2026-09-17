@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Proof Reader — Westamerica</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #0f1117;
+    color: #e4e4e7;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px;
+  }
+  h1 {
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: #fff;
+  }
+  .subtitle {
+    color: #71717a;
+    margin-bottom: 32px;
+    font-size: 0.95rem;
+  }
+  #drop-zone {
+    width: 100%;
+    max-width: 700px;
+    border: 2px dashed #3f3f46;
+    border-radius: 16px;
+    padding: 60px 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: #18181b;
+    position: relative;
+  }
+  #drop-zone.dragover {
+    border-color: #22d3ee;
+    background: #0c2a33;
+  }
+  #drop-zone.processing {
+    border-color: #facc15;
+    background: #1a1a10;
+  }
+  #drop-zone .icon {
+    font-size: 3rem;
+    margin-bottom: 16px;
+    display: block;
+  }
+  #drop-zone p {
+    font-size: 1.1rem;
+    color: #a1a1aa;
+  }
+  #drop-zone p strong {
+    color: #22d3ee;
+  }
+  #file-input { display: none; }
+
+  #status {
+    margin-top: 24px;
+    width: 100%;
+    max-width: 700px;
+    text-align: center;
+  }
+  #progress-bar-container {
+    display: none;
+    width: 100%;
+    background: #27272a;
+    border-radius: 8px;
+    height: 8px;
+    overflow: hidden;
+    margin-bottom: 12px;
+  }
+  #progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #22d3ee, #06b6d4);
+    border-radius: 8px;
+    transition: width 0.15s;
+  }
+  #status-text {
+    color: #a1a1aa;
+    font-size: 0.9rem;
+  }
+  #error-log {
+    margin-top: 16px;
+    max-width: 700px;
+    width: 100%;
+    max-height: 200px;
+    overflow-y: auto;
+    font-size: 0.8rem;
+    color: #f87171;
+    text-align: left;
+    display: none;
+  }
+  #error-log div {
+    padding: 4px 0;
+    border-bottom: 1px solid #27272a;
+  }
+  #results {
+    margin-top: 24px;
+    width: 100%;
+    max-width: 900px;
+    display: none;
+  }
+  #results h2 {
+    font-size: 1.2rem;
+    margin-bottom: 12px;
+    color: #fff;
+  }
+  .result-stats {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .stat-card {
+    background: #18181b;
+    border: 1px solid #27272a;
+    border-radius: 10px;
+    padding: 16px 24px;
+    min-width: 120px;
+  }
+  .stat-card .label { color: #71717a; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-card .value { font-size: 1.5rem; font-weight: 700; color: #22d3ee; margin-top: 4px; }
+
+  #preview-table {
+    width: 100%;
+    overflow-x: auto;
+    margin-top: 16px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  th {
+    background: #27272a;
+    color: #e4e4e7;
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    white-space: nowrap;
+  }
+  td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #1e1e24;
+    color: #a1a1aa;
+    white-space: nowrap;
+  }
+  tr:hover td { background: #1c1c22; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 28px;
+    border: none;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-top: 12px;
+  }
+  .btn-primary {
+    background: #22d3ee;
+    color: #0f1117;
+  }
+  .btn-primary:hover { background: #06b6d4; }
+  .btn-secondary {
+    background: #27272a;
+    color: #e4e4e7;
+    margin-left: 8px;
+  }
+  .btn-secondary:hover { background: #3f3f46; }
+</style>
+</head>
+<body>
+
+<h1>📋 Proof Reader</h1>
+<p class="subtitle">Drop proof PDFs to extract job data into a spreadsheet</p>
+
+<div id="drop-zone">
+  <span class="icon">📄</span>
+  <p>Drag &amp; drop proof PDFs here<br>or <strong>click to browse</strong></p>
+</div>
+<input type="file" id="file-input" multiple accept=".pdf">
+
+<div id="status">
+  <div id="progress-bar-container"><div id="progress-bar"></div></div>
+  <div id="status-text"></div>
+</div>
+<div id="error-log"></div>
+
+<div id="results">
+  <h2>Extracted Data</h2>
+  <div class="result-stats">
+    <div class="stat-card"><div class="label">Proofs</div><div class="value" id="stat-proofs">0</div></div>
+    <div class="stat-card"><div class="label">Sheets</div><div class="value" id="stat-sheets">0</div></div>
+    <div class="stat-card"><div class="label">Errors</div><div class="value" id="stat-errors">0</div></div>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <button class="btn btn-primary" onclick="exportXLSX()">⬇ Download .xlsx</button>
+    <button class="btn btn-secondary" onclick="exportCSV()">⬇ Download .csv</button>
+  </div>
+  <div id="preview-table" style="max-height:400px;overflow:auto;margin-top:16px;"></div>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const progressContainer = document.getElementById('progress-bar-container');
+const progressBar = document.getElementById('progress-bar');
+const statusText = document.getElementById('status-text');
+const errorLog = document.getElementById('error-log');
+const resultsDiv = document.getElementById('results');
+
+let allRows = [];
+
+// ── Drop / click handling ──────────────────────────────
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+// ── Main processing pipeline ───────────────────────────
+async function handleFiles(fileList) {
+  const pdfs = [...fileList].filter(f => f.name.toLowerCase().endsWith('.pdf'));
+  if (!pdfs.length) { statusText.textContent = 'No PDF files found.'; return; }
+
+  allRows = [];
+  errorLog.innerHTML = '';
+  errorLog.style.display = 'none';
+  dropZone.classList.add('processing');
+  progressContainer.style.display = 'block';
+  resultsDiv.style.display = 'none';
+  let errorCount = 0;
+
+  for (let i = 0; i < pdfs.length; i++) {
+    const file = pdfs[i];
+    statusText.textContent = `Processing ${i + 1} of ${pdfs.length}: ${file.name}`;
+    progressBar.style.width = ((i / pdfs.length) * 100) + '%';
+
+    try {
+      const rows = await processPDF(file);
+      allRows.push(...rows);
+    } catch (err) {
+      errorCount++;
+      logError(`${file.name}: ${err.message}`);
+    }
+  }
+
+  progressBar.style.width = '100%';
+  dropZone.classList.remove('processing');
+
+  if (allRows.length === 0) {
+    statusText.textContent = 'No data extracted. Check that these are Westamerica proof PDFs.';
+    return;
+  }
+
+  // Show results
+  document.getElementById('stat-proofs').textContent = pdfs.length;
+  document.getElementById('stat-sheets').textContent = allRows.length;
+  document.getElementById('stat-errors').textContent = errorCount;
+  resultsDiv.style.display = 'block';
+  renderPreview();
+
+  statusText.textContent = `Done! ${allRows.length} rows from ${pdfs.length} proof${pdfs.length > 1 ? 's' : ''}.`;
+
+  // Auto-trigger XLSX download
+  exportXLSX();
+}
+
+// ── PDF text extraction & parsing ──────────────────────
+async function processPDF(file) {
+  const buf = await file.arrayBuffer();
+  const data = new Uint8Array(buf);
+  const pdf = await pdfjsLib.getDocument({ data }).promise;
+  const rows = [];
+  const proofName = file.name.replace(/\.pdf$/i, '');
+
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const tc = await page.getTextContent();
+    const rawText = tc.items.map(it => it.str).join(' ');
+
+    const parsed = parsePage(rawText, proofName);
+    if (parsed) rows.push(parsed);
+  }
+
+  // If no pages parsed successfully, it's an unrecognized/legacy format
+  if (rows.length === 0) {
+    rows.push({
+      proofName,
+      fileName: 'format not supported',
+      width: '',
+      height: '',
+      material: '',
+      quantity: '',
+      sqInches: ''
+    });
+  }
+
+  pdf.destroy();
+  return rows;
+}
+
+function parsePage(text, proofName) {
+  // Normalize whitespace
+  const t = text.replace(/\s+/g, ' ').trim();
+
+  // ── File name (from footer: "filename.pdf — Sheet X of Y") ──
+  let fileName = '';
+  // Footer pattern: "filename.pdf — Sheet X of Y" — filename has no spaces
+  const footerMatch = t.match(/(\S+\.pdf)\s*(?:—|--|-)\s*Sheet\s+\d+\s+of\s+\d+\s*$/i);
+  if (footerMatch) {
+    fileName = footerMatch[1].trim();
+  } else {
+    // Fallback: look for non-space .pdf filenames
+    const pdfNames = t.match(/\b(\S+\.pdf)\b/gi);
+    if (pdfNames && pdfNames.length) {
+      fileName = pdfNames[pdfNames.length - 1].trim();
+    }
+  }
+
+  // ── Material / Substrate ──
+  let material = '';
+  const matMatch = t.match(/Material\s+([A-Za-z0-9 /\-]+?)(?=\s+Quantity|\s+Print|\s+Finishing|\s+Proof)/i);
+  if (matMatch) material = matMatch[1].trim();
+
+  // ── Quantity ──
+  let quantity = '';
+  const qtyMatch = t.match(/Quantity\s+(\d[\d,]*)/i);
+  if (qtyMatch) quantity = qtyMatch[1].replace(/,/g, '');
+
+  // ── Dimensions — prefer "Trim Size" or "Finished Size" line ──
+  let width = '', height = '';
+  // Pattern: W" × H" near Trim/Finished Size
+  // Match dimensions like: 8.50" × 11" (straight or smart quotes, inch marks)
+  const dimMatch = t.match(/(\d+(?:\.\d+)?)\s*["""″']\s*[×xX]\s*(\d+(?:\.\d+)?)\s*["""″']/);
+  if (dimMatch) {
+    width = parseFloat(dimMatch[1]);
+    height = parseFloat(dimMatch[2]);
+  }
+
+  // ── Square inches ──
+  let sqIn = '';
+  if (width && height) sqIn = Math.round(width * height * 100) / 100;
+
+  // Skip pages with no useful data
+  if (!fileName && !width) return null;
+
+  return {
+    proofName,
+    fileName,
+    width: width || '',
+    height: height || '',
+    material,
+    quantity,
+    sqInches: sqIn
+  };
+}
+
+// ── Error logging ──────────────────────────────────────
+function logError(msg) {
+  errorLog.style.display = 'block';
+  const d = document.createElement('div');
+  d.textContent = '⚠ ' + msg;
+  errorLog.appendChild(d);
+}
+
+// ── Preview table ──────────────────────────────────────
+function renderPreview() {
+  const maxPreview = 50;
+  let html = '<table><thead><tr>' +
+    '<th>Proof Name</th><th>File Proofed</th><th>Width (in)</th><th>Height (in)</th>' +
+    '<th>Substrate</th><th>Quantity</th><th>Sq Inches</th></tr></thead><tbody>';
+  const show = allRows.slice(0, maxPreview);
+  for (const r of show) {
+    html += `<tr>
+      <td>${esc(r.proofName)}</td>
+      <td>${esc(r.fileName)}</td>
+      <td>${r.width}</td><td>${r.height}</td>
+      <td>${esc(r.material)}</td>
+      <td>${r.quantity}</td>
+      <td>${r.sqInches}</td>
+    </tr>`;
+  }
+  if (allRows.length > maxPreview) {
+    html += `<tr><td colspan="7" style="text-align:center;color:#71717a;">… and ${allRows.length - maxPreview} more rows</td></tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('preview-table').innerHTML = html;
+}
+
+function esc(s) {
+  const d = document.createElement('span');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+// ── Export functions ────────────────────────────────────
+function buildSheetData() {
+  const header = ['Proof Name', 'File Proofed', 'Width (in)', 'Height (in)', 'Substrate', 'Quantity', 'Sq Inches'];
+  const data = [header];
+  for (const r of allRows) {
+    data.push([
+      r.proofName,
+      r.fileName,
+      r.width,
+      r.height,
+      r.material,
+      r.quantity ? parseInt(r.quantity) : '',
+      r.sqInches
+    ]);
+  }
+  return data;
+}
+
+function exportXLSX() {
+  const data = buildSheetData();
+  const ws = XLSX.utils.aoa_to_sheet(data);
+
+  // Column widths
+  ws['!cols'] = [
+    { wch: 40 }, // Proof Name
+    { wch: 40 }, // File Proofed
+    { wch: 12 }, // Width
+    { wch: 12 }, // Height
+    { wch: 18 }, // Substrate
+    { wch: 10 }, // Quantity
+    { wch: 12 }, // Sq Inches
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Proof Data');
+  XLSX.writeFile(wb, 'proof-data.xlsx');
+}
+
+function exportCSV() {
+  const data = buildSheetData();
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Proof Data');
+  XLSX.writeFile(wb, 'proof-data.csv');
+}
+</script>
+</body>
+</html>
