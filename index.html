@@ -327,18 +327,28 @@ function parsePage(text, proofName) {
   // Normalize whitespace
   const t = text.replace(/\s+/g, ' ').trim();
 
-  // ── File name (from footer: "filename.pdf — Sheet X of Y") ──
+  // ── File name: find all .pdf references, pick the source file ──
   let fileName = '';
-  // Footer pattern: "filename.pdf — Sheet X of Y" — filename has no spaces
-  const footerMatch = t.match(/(\S+\.pdf)\s*(?:—|--|-)\s*Sheet\s+\d+\s+of\s+\d+\s*$/i);
-  if (footerMatch) {
-    fileName = footerMatch[1].trim();
-  } else {
-    // Fallback: look for non-space .pdf filenames
-    const pdfNames = t.match(/\b(\S+\.pdf)\b/gi);
-    if (pdfNames && pdfNames.length) {
-      fileName = pdfNames[pdfNames.length - 1].trim();
+  // Collect every .pdf filename in the text (non-greedy, no spaces in name)
+  const allPdfs = [];
+  const pdfRe = /(\S+\.pdf)\b/gi;
+  let m;
+  while ((m = pdfRe.exec(t)) !== null) allPdfs.push(m[1]);
+  if (allPdfs.length) {
+    // Count occurrences — the source filename repeats (header + footer)
+    const counts = {};
+    for (const n of allPdfs) {
+      const k = n.toLowerCase();
+      counts[k] = (counts[k] || 0) + 1;
+      if (!counts['_first_' + k]) counts['_first_' + k] = n; // preserve case
     }
+    // Pick the most frequent .pdf name (it's the file being proofed)
+    let best = '', bestCount = 0;
+    for (const [k, c] of Object.entries(counts)) {
+      if (k.startsWith('_first_')) continue;
+      if (c > bestCount) { bestCount = c; best = counts['_first_' + k]; }
+    }
+    fileName = best;
   }
 
   // ── Material / Substrate ──
