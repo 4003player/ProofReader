@@ -108,7 +108,7 @@
   #results {
     margin-top: 24px;
     width: 100%;
-    max-width: 900px;
+    max-width: 1100px;
     display: none;
   }
   #results h2 {
@@ -159,6 +159,16 @@
     white-space: nowrap;
   }
   tr:hover td { background: #1c1c22; }
+  td.meta-source { font-size: 0.7rem; }
+  td.meta-source .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.65rem;
+    font-weight: 600;
+  }
+  .badge-embedded { background: #064e3b; color: #34d399; letter-spacing: 0.02em; }
+  .badge-legacy   { background: #4a2617; color: #fb923c; letter-spacing: 0.02em; }
 
   .btn {
     display: inline-flex;
@@ -215,6 +225,9 @@
     <button class="btn btn-secondary" onclick="exportCSV()">⬇ Download .csv</button>
   </div>
   <div id="preview-table" style="max-height:400px;overflow:auto;margin-top:16px;"></div>
+  <div style="text-align:center;margin-top:20px;">
+    <button class="btn btn-secondary" onclick="resetAll()" style="background:#991b1b;color:#fecaca;">↻ Clear All &amp; Start Over</button>
+  </div>
 </div>
 
 <script>
@@ -229,6 +242,8 @@ const errorLog = document.getElementById('error-log');
 const resultsDiv = document.getElementById('results');
 
 let allRows = [];
+let totalProofs = 0;
+let totalErrors = 0;
 
 // ── Drop / click handling ──────────────────────────────
 dropZone.addEventListener('click', () => fileInput.click());
@@ -246,13 +261,10 @@ async function handleFiles(fileList) {
   const pdfs = [...fileList].filter(f => f.name.toLowerCase().endsWith('.pdf'));
   if (!pdfs.length) { statusText.textContent = 'No PDF files found.'; return; }
 
-  allRows = [];
-  errorLog.innerHTML = '';
-  errorLog.style.display = 'none';
   dropZone.classList.add('processing');
   progressContainer.style.display = 'block';
-  resultsDiv.style.display = 'none';
   let errorCount = 0;
+  let newRows = 0;
 
   for (let i = 0; i < pdfs.length; i++) {
     const file = pdfs[i];
@@ -262,6 +274,7 @@ async function handleFiles(fileList) {
     try {
       const rows = await processPDF(file);
       allRows.push(...rows);
+      newRows += rows.length;
     } catch (err) {
       errorCount++;
       logError(`${file.name}: ${err.message}`);
@@ -271,22 +284,43 @@ async function handleFiles(fileList) {
   progressBar.style.width = '100%';
   dropZone.classList.remove('processing');
 
-  if (allRows.length === 0) {
+  totalProofs += pdfs.length;
+  totalErrors += errorCount;
+
+  if (newRows === 0 && allRows.length === 0) {
     statusText.textContent = 'No data extracted. Check that these are Westamerica proof PDFs.';
     return;
   }
 
   // Show results
-  document.getElementById('stat-proofs').textContent = pdfs.length;
+  document.getElementById('stat-proofs').textContent = totalProofs;
   document.getElementById('stat-sheets').textContent = allRows.length;
-  document.getElementById('stat-errors').textContent = errorCount;
+  document.getElementById('stat-errors').textContent = totalErrors;
   resultsDiv.style.display = 'block';
   renderPreview();
 
-  statusText.textContent = `Done! ${allRows.length} rows from ${pdfs.length} proof${pdfs.length > 1 ? 's' : ''}.`;
+  statusText.textContent = `Added ${newRows} rows from ${pdfs.length} file${pdfs.length > 1 ? 's' : ''} — ${allRows.length} total rows from ${totalProofs} proof${totalProofs > 1 ? 's' : ''}.`;
 
-  // Auto-trigger XLSX download
-  exportXLSX();
+  // Reset file input so the same file can be re-dropped
+  fileInput.value = '';
+}
+
+// ── Extract embedded structured metadata from page text ──
+function extractEmbeddedMeta(rawText) {
+  const startTag = '%%PROOFDATA_START%%';
+  const endTag = '%%PROOFDATA_END%%';
+  const si = rawText.indexOf(startTag);
+  if (si < 0) return null;
+  const jsonStart = si + startTag.length;
+  const ei = rawText.indexOf(endTag, jsonStart);
+  if (ei < 0) return null;
+  try {
+    const obj = JSON.parse(rawText.substring(jsonStart, ei));
+    if (obj && obj._proofMeta) return obj;
+  } catch (e) {
+    console.warn('Embedded meta parse failed:', e);
+  }
+  return null;
 }
 
 // ── PDF text extraction & parsing ──────────────────────
@@ -302,20 +336,53 @@ async function processPDF(file) {
     const tc = await page.getTextContent();
     const rawText = tc.items.map(it => it.str).join(' ');
 
-    const parsed = parsePage(rawText, proofName);
-    if (parsed) rows.push(parsed);
+    // Try embedded structured metadata first (ProofmakerPro v2+)
+    const meta = extractEmbeddedMeta(rawText);
+    if (meta) {
+      rows.push({
+        proofName,
+        clientName: meta.clientName || '',
+        jobNumber: meta.jobNumber || '',
+        fileName: meta.fileName || '',
+        width: meta.width || '',
+        height: meta.height || '',
+        material: meta.substrate || '',
+        quantity: meta.quantity || '',
+        printType: meta.printType || '',
+        finishing: meta.finishing || '',
+        notes: meta.notes || '',
+        date: meta.date || '',
+        backFileName: meta.backFileName || '',
+        scale: meta.scale || '',
+        sqInches: (meta.width && meta.height) ? Math.round(meta.width * meta.height * 100) / 100 : '',
+        source: 'embedded'
+      });
+    } else {
+      // Fallback: legacy visual parsing
+      const parsed = parsePage(rawText, proofName);
+      if (parsed) rows.push(parsed);
+    }
   }
 
   // If no pages parsed successfully, it's an unrecognized/legacy format
   if (rows.length === 0) {
     rows.push({
       proofName,
+      clientName: '',
+      jobNumber: '',
       fileName: 'format not supported',
       width: '',
       height: '',
       material: '',
       quantity: '',
-      sqInches: ''
+      printType: '',
+      finishing: '',
+      notes: '',
+      date: '',
+      backFileName: '',
+      scale: '',
+      sqInches: '',
+      source: 'none'
     });
   }
 
@@ -351,6 +418,17 @@ function parsePage(text, proofName) {
     fileName = best;
   }
 
+  // ── Client Name ──
+  let clientName = '';
+  // Client name appears right after the logo area, before "Job" label
+  const clientMatch = t.match(/(?:^|Proof\s+Sheet\s*)([\w][\w &.,'\/-]{1,60}?)\s+Job\b/i);
+  if (clientMatch) clientName = clientMatch[1].trim();
+
+  // ── Job Number ──
+  let jobNumber = '';
+  const jobMatch = t.match(/Job\s+([\w\-]+)/i);
+  if (jobMatch) jobNumber = jobMatch[1].trim();
+
   // ── Material / Substrate ──
   let material = '';
   const matMatch = t.match(/Material\s+([A-Za-z0-9 /\-]+?)(?=\s+Quantity|\s+Print|\s+Finishing|\s+Proof)/i);
@@ -361,11 +439,19 @@ function parsePage(text, proofName) {
   const qtyMatch = t.match(/Quantity\s+(\d[\d,]*)/i);
   if (qtyMatch) quantity = qtyMatch[1].replace(/,/g, '');
 
+  // ── Print Type ──
+  let printType = '';
+  const printMatch = t.match(/Print\s+([^\s][\w\/+ PMS]*?)(?=\s+Finishing|\s+Scale|\s+Notes|\s+Single|\s+File)/i);
+  if (printMatch) printType = printMatch[1].trim();
+
+  // ── Finishing ──
+  let finishing = '';
+  const finMatch = t.match(/Finishing\s+(.+?)(?=\s+Notes\s|\s+Single.Sided|\s+Double.Sided|\s+File\s+Scale|\s+(?:Trim|Die|Finished)\s+Size)/i);
+  if (finMatch) finishing = finMatch[1].trim();
+
   // ── Dimensions — prefer "Trim Size" or "Finished Size" line ──
   let width = '', height = '';
-  // Pattern: W" × H" near Trim/Finished Size
-  // Match dimensions like: 8.50" × 11" (straight or smart quotes, inch marks)
-  const dimMatch = t.match(/(\d+(?:\.\d+)?)\s*["""″']\s*[×xX]\s*(\d+(?:\.\d+)?)\s*["""″']/);
+  const dimMatch = t.match(/(\d+(?:\.\d+)?)\s*[""\u201c\u201d\u2033']?\s*[×xX]\s*(\d+(?:\.\d+)?)\s*[""\u201c\u201d\u2033']?/);
   if (dimMatch) {
     width = parseFloat(dimMatch[1]);
     height = parseFloat(dimMatch[2]);
@@ -380,12 +466,21 @@ function parsePage(text, proofName) {
 
   return {
     proofName,
+    clientName,
+    jobNumber,
     fileName,
     width: width || '',
     height: height || '',
     material,
     quantity,
-    sqInches: sqIn
+    printType,
+    finishing,
+    notes: '',
+    date: '',
+    backFileName: '',
+    scale: '',
+    sqInches: sqIn,
+    source: 'parsed'
   };
 }
 
@@ -393,7 +488,7 @@ function parsePage(text, proofName) {
 function logError(msg) {
   errorLog.style.display = 'block';
   const d = document.createElement('div');
-  d.textContent = '⚠ ' + msg;
+  d.textContent = '\u26a0 ' + msg;
   errorLog.appendChild(d);
 }
 
@@ -401,21 +496,30 @@ function logError(msg) {
 function renderPreview() {
   const maxPreview = 50;
   let html = '<table><thead><tr>' +
-    '<th>Proof Name</th><th>File Proofed</th><th>Width (in)</th><th>Height (in)</th>' +
-    '<th>Substrate</th><th>Quantity</th><th>Sq Inches</th></tr></thead><tbody>';
+    '<th>Legacy?</th><th>Proof Name</th><th>Client</th><th>Job #</th><th>File Proofed</th>' +
+    '<th>W (in)</th><th>H (in)</th><th>Substrate</th><th>Qty</th>' +
+    '<th>Print</th><th>Finishing</th><th>Sq In</th></tr></thead><tbody>';
   const show = allRows.slice(0, maxPreview);
   for (const r of show) {
+    const badge = r.source === 'embedded'
+      ? '<span class="badge badge-embedded">✓ Current</span>'
+      : '<span class="badge badge-legacy">⚠ Legacy</span>';
     html += `<tr>
+      <td class="meta-source">${badge}</td>
       <td>${esc(r.proofName)}</td>
+      <td>${esc(r.clientName)}</td>
+      <td>${esc(r.jobNumber)}</td>
       <td>${esc(r.fileName)}</td>
       <td>${r.width}</td><td>${r.height}</td>
       <td>${esc(r.material)}</td>
       <td>${r.quantity}</td>
+      <td>${esc(r.printType)}</td>
+      <td>${esc(r.finishing)}</td>
       <td>${r.sqInches}</td>
     </tr>`;
   }
   if (allRows.length > maxPreview) {
-    html += `<tr><td colspan="7" style="text-align:center;color:#71717a;">… and ${allRows.length - maxPreview} more rows</td></tr>`;
+    html += `<tr><td colspan="12" style="text-align:center;color:#71717a;">&hellip; and ${allRows.length - maxPreview} more rows</td></tr>`;
   }
   html += '</tbody></table>';
   document.getElementById('preview-table').innerHTML = html;
@@ -429,17 +533,26 @@ function esc(s) {
 
 // ── Export functions ────────────────────────────────────
 function buildSheetData() {
-  const header = ['Proof Name', 'File Proofed', 'Width (in)', 'Height (in)', 'Substrate', 'Quantity', 'Sq Inches'];
+  const header = ['Proof Name', 'Client Name', 'Job Number', 'File Proofed', 'Width (in)', 'Height (in)',
+                  'Substrate', 'Quantity', 'Print', 'Finishing', 'Notes', 'Back File', 'Scale', 'Sq Inches', 'Legacy Proof'];
   const data = [header];
   for (const r of allRows) {
     data.push([
       r.proofName,
+      r.clientName,
+      r.jobNumber,
       r.fileName,
       r.width,
       r.height,
       r.material,
-      r.quantity ? parseInt(r.quantity) : '',
-      r.sqInches
+      r.quantity ? parseInt(r.quantity) || r.quantity : '',
+      r.printType,
+      r.finishing,
+      r.notes,
+      r.backFileName,
+      r.scale,
+      r.sqInches,
+      r.source === 'embedded' ? 'No' : 'Yes'
     ]);
   }
   return data;
@@ -452,12 +565,20 @@ function exportXLSX() {
   // Column widths
   ws['!cols'] = [
     { wch: 40 }, // Proof Name
+    { wch: 24 }, // Client Name
+    { wch: 14 }, // Job Number
     { wch: 40 }, // File Proofed
-    { wch: 12 }, // Width
-    { wch: 12 }, // Height
-    { wch: 18 }, // Substrate
+    { wch: 10 }, // Width
+    { wch: 10 }, // Height
+    { wch: 20 }, // Substrate
     { wch: 10 }, // Quantity
+    { wch: 14 }, // Print
+    { wch: 24 }, // Finishing
+    { wch: 20 }, // Notes
+    { wch: 30 }, // Back File
+    { wch: 8 },  // Scale
     { wch: 12 }, // Sq Inches
+    { wch: 14 }, // Legacy Proof
   ];
 
   const wb = XLSX.utils.book_new();
@@ -471,6 +592,23 @@ function exportCSV() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Proof Data');
   XLSX.writeFile(wb, 'proof-data.csv');
+}
+
+function resetAll() {
+  allRows = [];
+  totalProofs = 0;
+  totalErrors = 0;
+  errorLog.innerHTML = '';
+  errorLog.style.display = 'none';
+  resultsDiv.style.display = 'none';
+  progressContainer.style.display = 'none';
+  progressBar.style.width = '0%';
+  statusText.textContent = '';
+  fileInput.value = '';
+  document.getElementById('stat-proofs').textContent = '0';
+  document.getElementById('stat-sheets').textContent = '0';
+  document.getElementById('stat-errors').textContent = '0';
+  document.getElementById('preview-table').innerHTML = '';
 }
 </script>
 </body>
